@@ -6,6 +6,18 @@ Finds optimal path from snake head to apple while avoiding obstacles (snake body
 import heapq
 from typing import List, Tuple, Optional, Set
 
+# Optional RL integration
+try:
+    from rl_agent import get_rl_penalty, get_rl_neighbor_penalty
+    RL_AVAILABLE = True
+except ImportError:
+    RL_AVAILABLE = False
+    def get_rl_penalty(*args, **kwargs):
+        return 0.0
+    def get_rl_neighbor_penalty(neighbor_count: int, base_weight: float = 1.5) -> float:
+        max_neighbors = 4
+        return (max_neighbors - neighbor_count) * base_weight
+
 
 class Node:
     """Node for A* algorithm"""
@@ -295,7 +307,10 @@ def enhanced_heuristic(
     grid_size: int,
     reachability_weight: float = 2.0,
     neighbor_weight: float = 1.5,
-    cache: Optional[dict] = None
+    cache: Optional[dict] = None,
+    snake_body: Optional[List[Tuple[int, int]]] = None,
+    action: Optional[Tuple[int, int]] = None,
+    rl_weight: float = 1.0
 ) -> float:
     """
     Enhanced heuristic that combines distance to goal with neighbor count and reachability.
@@ -318,10 +333,15 @@ def enhanced_heuristic(
     
     # Count free neighbors - more neighbors = more options = better
     num_neighbors = count_free_neighbors(position, obstacles, grid_size)
-    max_neighbors = 4  # Maximum possible neighbors in a grid
-    # Convert to penalty: fewer neighbors = higher penalty
-    # If we have 4 neighbors, penalty is 0. If we have 0 neighbors, penalty is max
-    neighbor_penalty = (max_neighbors - num_neighbors) * neighbor_weight
+    
+    # Use RL-learned neighbor penalty if available, otherwise use fixed weight
+    if RL_AVAILABLE:
+        neighbor_penalty = get_rl_neighbor_penalty(num_neighbors, base_weight=neighbor_weight)
+    else:
+        max_neighbors = 4  # Maximum possible neighbors in a grid
+        # Convert to penalty: fewer neighbors = higher penalty
+        # If we have 4 neighbors, penalty is 0. If we have 0 neighbors, penalty is max
+        neighbor_penalty = (max_neighbors - num_neighbors) * neighbor_weight
     
     # Check reachability - can we reach test apples from this position?
     # Lower reachability means higher risk of getting trapped
@@ -339,8 +359,16 @@ def enhanced_heuristic(
         # Assume good reachability if we're far from obstacles
         trap_penalty = 0.0
     
-    # Combine: distance to goal + penalty for few neighbors + penalty for low reachability
-    heuristic = distance_to_goal + neighbor_penalty + trap_penalty
+    # RL-based penalty (if available and action provided)
+    rl_penalty = 0.0
+    if RL_AVAILABLE and snake_body is not None and action is not None:
+        try:
+            rl_penalty = get_rl_penalty(position, goal, snake_body, grid_size, action) * rl_weight
+        except:
+            pass  # Ignore RL errors
+    
+    # Combine: distance to goal + penalty for few neighbors + penalty for low reachability + RL penalty
+    heuristic = distance_to_goal + neighbor_penalty + trap_penalty + rl_penalty
     
     return heuristic
 
@@ -390,7 +418,8 @@ def hybrid_a_star(
     start: Tuple[int, int],
     goal: Tuple[int, int],
     obstacles: Set[Tuple[int, int]],
-    grid_size: int
+    grid_size: int,
+    snake_body: Optional[List[Tuple[int, int]]] = None
 ) -> Tuple[Optional[List[Tuple[int, int]]], Optional[List[Tuple[int, int]]]]:
     """
     Hybrid A* algorithm to find path from start to goal.
@@ -422,7 +451,9 @@ def hybrid_a_star(
     start_node = Node(
         position=start,
         g_cost=0,
-        h_cost=enhanced_heuristic(start, goal, obstacles, grid_size, cache=reachability_cache)
+        h_cost=enhanced_heuristic(start, goal, obstacles, grid_size, 
+                                 cache=reachability_cache, 
+                                 snake_body=snake_body)
     )
     
     heapq.heappush(open_set, start_node)
@@ -469,7 +500,13 @@ def hybrid_a_star(
             # Check if this is a better path to this neighbor
             if neighbor_pos not in g_costs or tentative_g_cost < g_costs[neighbor_pos]:
                 g_costs[neighbor_pos] = tentative_g_cost
-                h_cost = enhanced_heuristic(neighbor_pos, goal, obstacles, grid_size, cache=reachability_cache)
+                # Calculate action (direction) from current to neighbor
+                action = (neighbor_pos[0] - current_node.position[0], 
+                         neighbor_pos[1] - current_node.position[1])
+                h_cost = enhanced_heuristic(neighbor_pos, goal, obstacles, grid_size, 
+                                          cache=reachability_cache,
+                                          snake_body=snake_body,
+                                          action=action)
                 
                 neighbor_node = Node(
                     position=neighbor_pos,
@@ -573,7 +610,7 @@ def get_next_direction(
     obstacles = set(snake_body[1:-1]) if len(snake_body) > 2 else set(snake_body[1:])
     
     # Find path using Hybrid A* (returns both path to goal and longest path)
-    path_to_goal, longest_path = hybrid_a_star(snake_head, apple, obstacles, grid_size)
+    path_to_goal, longest_path = hybrid_a_star(snake_head, apple, obstacles, grid_size, snake_body=snake_body)
     
     # Prioritize reachability over goal-seeking to avoid traps
     # Check reachability for all candidate paths

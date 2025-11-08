@@ -5,6 +5,21 @@ import os
 from hybrid_a_star import get_next_direction as hybrid_a_star_get_next_direction
 from hamiltonian_cycle import get_next_direction_cached as hamiltonian_cycle_get_next_direction
 
+# Optional RL integration
+try:
+    from rl_agent import record_game_step, learn_from_game, get_rl_agent, get_rl_stats
+    RL_AVAILABLE = True
+except ImportError:
+    RL_AVAILABLE = False
+    def record_game_step(*args, **kwargs):
+        pass
+    def learn_from_game(*args, **kwargs):
+        pass
+    def get_rl_agent():
+        return None
+    def get_rl_stats():
+        return None
+
 # Initialize Pygame
 pygame.init()
 
@@ -60,7 +75,10 @@ class SnakeGame:
         self.high_score = self.load_high_score()
         self.auto_mode = False
         self.current_path = None  # Path for visualization in auto mode
-        self.algorithm = ALGORITHM_HAMILTONIAN_CYCLE  # Default algorithm
+        self.algorithm = ALGORITHM_HAMILTONIAN_CYCLE  # Default algorithm (for start screen)
+        self.ate_apple_this_step = False  # Track if apple was eaten this step
+        self.auto_restart = False  # Auto-restart after death in auto mode
+        self.restart_delay = 0  # Delay counter for auto-restart
         
         self.reset_game()
     
@@ -124,9 +142,10 @@ class SnakeGame:
                         self.state = STATE_PLAYING
                         self.reset_game()
                     elif event.key == pygame.K_a:
-                        # Auto mode
+                        # Auto mode - default to Hybrid A* for RL learning
                         self.game_speed = SPEED_MEDIUM
                         self.auto_mode = True
+                        self.algorithm = ALGORITHM_HYBRID_A_STAR  # Default to Hybrid A* in auto mode
                         self.state = STATE_AUTO
                         self.reset_game()
                     elif event.key == pygame.K_t:
@@ -181,8 +200,21 @@ class SnakeGame:
     
     def update(self):
         """Update game state"""
+        # Handle auto-restart delay
+        if self.auto_restart and self.restart_delay > 0:
+            self.restart_delay -= 1
+            if self.restart_delay <= 0:
+                # Auto-restart the game
+                self.reset_game()
+                self.auto_restart = False
+                self.state = STATE_AUTO
+            return
+        
         if (self.state != STATE_PLAYING and self.state != STATE_AUTO) or self.game_over:
             return
+        
+        # Track if we ate apple this step (for RL)
+        self.ate_apple_this_step = False
         
         # Auto mode: use selected algorithm to determine next direction
         if self.state == STATE_AUTO:
@@ -216,6 +248,24 @@ class SnakeGame:
         head_x, head_y = self.snake[0]
         new_head = (head_x + self.direction[0], head_y + self.direction[1])
         
+        # Record step for RL learning (only for Hybrid A* in auto mode)
+        # Record BEFORE moving so we capture the state-action pair
+        if RL_AVAILABLE and self.state == STATE_AUTO and self.algorithm == ALGORITHM_HYBRID_A_STAR:
+            try:
+                from rl_agent import get_rl_agent
+                agent = get_rl_agent()
+                # Calculate reward for current state (before move)
+                reward = agent.get_reward(
+                    self.snake[0], self.apple, self.snake, GRID_SIZE,
+                    False, False  # Not game over, not ate apple yet
+                )
+                record_game_step(
+                    self.snake[0], self.apple, self.snake, GRID_SIZE,
+                    self.direction, reward
+                )
+            except:
+                pass  # Ignore RL errors
+        
         # Check wall collision
         if (new_head[0] < 0 or new_head[0] >= GRID_SIZE or 
             new_head[1] < 0 or new_head[1] >= GRID_SIZE):
@@ -224,6 +274,16 @@ class SnakeGame:
             if self.score > self.high_score:
                 self.high_score = self.score
                 self.save_high_score()
+            # Learn from game for RL
+            if RL_AVAILABLE and self.algorithm == ALGORITHM_HYBRID_A_STAR:
+                try:
+                    learn_from_game(True, self.score)
+                except:
+                    pass
+            # Auto-restart in auto mode
+            if self.auto_mode:
+                self.auto_restart = True
+                self.restart_delay = 60  # Wait 60 frames (~1 second at 60 FPS)
             return
         
         # Check self collision (exclude tail since it will move forward)
@@ -236,6 +296,16 @@ class SnakeGame:
             if self.score > self.high_score:
                 self.high_score = self.score
                 self.save_high_score()
+            # Learn from game for RL
+            if RL_AVAILABLE and self.algorithm == ALGORITHM_HYBRID_A_STAR:
+                try:
+                    learn_from_game(True, self.score)
+                except:
+                    pass
+            # Auto-restart in auto mode
+            if self.auto_mode:
+                self.auto_restart = True
+                self.restart_delay = 60  # Wait 60 frames (~1 second at 60 FPS)
             return
         
         # Move snake
@@ -244,7 +314,23 @@ class SnakeGame:
         # Check if apple is eaten
         if new_head == self.apple:
             self.score += 1
+            self.ate_apple_this_step = True
             self.apple = self.generate_apple()
+            # Record positive reward for eating apple (RL)
+            if RL_AVAILABLE and self.state == STATE_AUTO and self.algorithm == ALGORITHM_HYBRID_A_STAR:
+                try:
+                    from rl_agent import get_rl_agent
+                    agent = get_rl_agent()
+                    reward = agent.get_reward(
+                        new_head, self.apple, self.snake, GRID_SIZE,
+                        False, True  # Not game over, ate apple
+                    )
+                    record_game_step(
+                        new_head, self.apple, self.snake, GRID_SIZE,
+                        self.direction, reward
+                    )
+                except:
+                    pass
         else:
             # Remove tail if no apple eaten
             self.snake.pop()
@@ -260,7 +346,9 @@ class SnakeGame:
             self.draw_game()
         elif self.state == STATE_GAME_OVER:
             self.draw_game()
-            self.draw_game_over()
+            # Only show game over screen if not auto-restarting
+            if not self.auto_restart:
+                self.draw_game_over()
         
         pygame.display.flip()
     
@@ -374,13 +462,23 @@ class SnakeGame:
         self.screen.blit(score_text, (10, WINDOW_SIZE + 10))
         
         # Draw mode indicator and algorithm
-        # Draw mode indicator and algorithm
         if self.state == STATE_AUTO:
             mode_text = self.small_font.render("AUTO MODE", True, BLUE)
             self.screen.blit(mode_text, (WINDOW_SIZE // 2 - 50, WINDOW_SIZE + 10))
             algo_name = "Hamiltonian" if self.algorithm == ALGORITHM_HAMILTONIAN_CYCLE else "Hybrid A*"
             algo_text = self.small_font.render(f"Algo: {algo_name} (Press T to switch)", True, BLUE)
             self.screen.blit(algo_text, (WINDOW_SIZE // 2 - 100, WINDOW_SIZE + 30))
+            
+            # Show RL status if using Hybrid A*
+            if self.algorithm == ALGORITHM_HYBRID_A_STAR and RL_AVAILABLE:
+                try:
+                    rl_stats = get_rl_stats()
+                    if rl_stats:
+                        rl_status = f"RL: Active | Q-table: {rl_stats['q_table_size']} | Games: {rl_stats['games_played']}"
+                        rl_text = self.small_font.render(rl_status, True, YELLOW)
+                        self.screen.blit(rl_text, (10, WINDOW_SIZE + 35))
+                except:
+                    pass
         
         # Draw high score
         high_score_text = self.small_font.render(f"High Score: {self.high_score}", True, YELLOW)
