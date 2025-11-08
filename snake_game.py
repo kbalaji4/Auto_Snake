@@ -2,6 +2,7 @@ import pygame
 import random
 import sys
 import os
+from hybrid_a_star import get_next_direction
 
 # Initialize Pygame
 pygame.init()
@@ -36,7 +37,8 @@ RIGHT = (1, 0)
 # Game states
 STATE_START = 0
 STATE_PLAYING = 1
-STATE_GAME_OVER = 2
+STATE_AUTO = 2
+STATE_GAME_OVER = 3
 
 class SnakeGame:
     def __init__(self):
@@ -51,6 +53,7 @@ class SnakeGame:
         self.state = STATE_START
         self.game_speed = SPEED_MEDIUM  # Default to medium
         self.high_score = self.load_high_score()
+        self.auto_mode = False
         
         self.reset_game()
     
@@ -100,15 +103,24 @@ class SnakeGame:
                     # Speed selection
                     if event.key == pygame.K_1 or event.key == pygame.K_KP1:
                         self.game_speed = SPEED_SLOW
+                        self.auto_mode = False
                         self.state = STATE_PLAYING
                         self.reset_game()
                     elif event.key == pygame.K_2 or event.key == pygame.K_KP2:
                         self.game_speed = SPEED_MEDIUM
+                        self.auto_mode = False
                         self.state = STATE_PLAYING
                         self.reset_game()
                     elif event.key == pygame.K_3 or event.key == pygame.K_KP3:
                         self.game_speed = SPEED_FAST
+                        self.auto_mode = False
                         self.state = STATE_PLAYING
+                        self.reset_game()
+                    elif event.key == pygame.K_a:
+                        # Auto mode
+                        self.game_speed = SPEED_MEDIUM
+                        self.auto_mode = True
+                        self.state = STATE_AUTO
                         self.reset_game()
                     elif event.key == pygame.K_ESCAPE:
                         return False
@@ -116,10 +128,12 @@ class SnakeGame:
                 elif self.state == STATE_GAME_OVER:
                     if event.key == pygame.K_SPACE:
                         self.state = STATE_START
+                        self.auto_mode = False
                     elif event.key == pygame.K_ESCAPE:
                         return False
                 
                 elif self.state == STATE_PLAYING:
+                    # Manual control only in playing mode
                     # Arrow keys
                     if event.key == pygame.K_UP and self.direction != DOWN:
                         self.next_direction = UP
@@ -144,10 +158,24 @@ class SnakeGame:
     
     def update(self):
         """Update game state"""
-        if self.state != STATE_PLAYING or self.game_over:
+        if (self.state != STATE_PLAYING and self.state != STATE_AUTO) or self.game_over:
             return
         
-        # Update direction
+        # Auto mode: use Hybrid A* algorithm to determine next direction
+        if self.state == STATE_AUTO:
+            next_dir = get_next_direction(
+                snake_head=self.snake[0],
+                apple=self.apple,
+                snake_body=self.snake,
+                grid_size=GRID_SIZE,
+                current_direction=self.direction
+            )
+            if next_dir:
+                # Only update if the new direction is valid (not opposite of current)
+                if (next_dir[0] * -1, next_dir[1] * -1) != self.direction:
+                    self.next_direction = next_dir
+        
+        # Update direction (for both manual and auto mode)
         self.direction = self.next_direction
         
         # Calculate new head position
@@ -191,7 +219,7 @@ class SnakeGame:
         
         if self.state == STATE_START:
             self.draw_start_screen()
-        elif self.state == STATE_PLAYING:
+        elif self.state == STATE_PLAYING or self.state == STATE_AUTO:
             self.draw_game()
         elif self.state == STATE_GAME_OVER:
             self.draw_game()
@@ -219,9 +247,9 @@ class SnakeGame:
         # Speed options
         y_offset = 280
         speeds = [
-            ("1 - Slow", SPEED_SLOW, self.game_speed == SPEED_SLOW),
-            ("2 - Medium", SPEED_MEDIUM, self.game_speed == SPEED_MEDIUM),
-            ("3 - Fast", SPEED_FAST, self.game_speed == SPEED_FAST)
+            ("1 - Slow", SPEED_SLOW, self.game_speed == SPEED_SLOW and not self.auto_mode),
+            ("2 - Medium", SPEED_MEDIUM, self.game_speed == SPEED_MEDIUM and not self.auto_mode),
+            ("3 - Fast", SPEED_FAST, self.game_speed == SPEED_FAST and not self.auto_mode)
         ]
         
         for i, (label, speed, is_selected) in enumerate(speeds):
@@ -235,8 +263,19 @@ class SnakeGame:
                 indicator_x = WINDOW_SIZE // 2 - 100
                 pygame.draw.circle(self.screen, YELLOW, (indicator_x, y_offset + i * 50), 5)
         
+        # Auto mode option
+        auto_y = y_offset + 3 * 50
+        auto_color = YELLOW if self.auto_mode else WHITE
+        auto_text = self.font.render("A - Auto Mode (AI)", True, auto_color)
+        auto_rect = auto_text.get_rect(center=(WINDOW_SIZE // 2, auto_y))
+        self.screen.blit(auto_text, auto_rect)
+        
+        if self.auto_mode:
+            indicator_x = WINDOW_SIZE // 2 - 100
+            pygame.draw.circle(self.screen, YELLOW, (indicator_x, auto_y), 5)
+        
         # Instructions
-        instruction_text = self.small_font.render("Press 1, 2, or 3 to select speed and start", True, GRAY)
+        instruction_text = self.small_font.render("Press 1, 2, 3 to select speed or A for auto mode", True, GRAY)
         instruction_rect = instruction_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 40))
         self.screen.blit(instruction_text, instruction_rect)
         
@@ -271,6 +310,11 @@ class SnakeGame:
         # Draw score
         score_text = self.font.render(f"Score: {self.score}", True, WHITE)
         self.screen.blit(score_text, (10, WINDOW_SIZE + 10))
+        
+        # Draw mode indicator
+        if self.state == STATE_AUTO:
+            mode_text = self.small_font.render("AUTO MODE", True, BLUE)
+            self.screen.blit(mode_text, (WINDOW_SIZE // 2 - 50, WINDOW_SIZE + 15))
         
         # Draw high score
         high_score_text = self.small_font.render(f"High Score: {self.high_score}", True, YELLOW)
