@@ -2,7 +2,8 @@ import pygame
 import random
 import sys
 import os
-from hybrid_a_star import get_next_direction
+from hybrid_a_star import get_next_direction as hybrid_a_star_get_next_direction
+from rrt_star import get_next_direction as rrt_star_get_next_direction
 
 # Initialize Pygame
 pygame.init()
@@ -40,6 +41,10 @@ STATE_PLAYING = 1
 STATE_AUTO = 2
 STATE_GAME_OVER = 3
 
+# Algorithm types
+ALGORITHM_HYBRID_A_STAR = 0
+ALGORITHM_RRT_STAR = 1
+
 class SnakeGame:
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE + 50))
@@ -55,6 +60,7 @@ class SnakeGame:
         self.high_score = self.load_high_score()
         self.auto_mode = False
         self.current_path = None  # Path for visualization in auto mode
+        self.algorithm = ALGORITHM_HYBRID_A_STAR  # Default algorithm
         
         self.reset_game()
     
@@ -123,8 +129,16 @@ class SnakeGame:
                         self.auto_mode = True
                         self.state = STATE_AUTO
                         self.reset_game()
+                    elif event.key == pygame.K_t:
+                        # Toggle algorithm
+                        self.algorithm = ALGORITHM_RRT_STAR if self.algorithm == ALGORITHM_HYBRID_A_STAR else ALGORITHM_HYBRID_A_STAR
                     elif event.key == pygame.K_ESCAPE:
                         return False
+                
+                elif self.state == STATE_AUTO:
+                    # Allow switching algorithm during auto mode
+                    if event.key == pygame.K_t:
+                        self.algorithm = ALGORITHM_RRT_STAR if self.algorithm == ALGORITHM_HYBRID_A_STAR else ALGORITHM_HYBRID_A_STAR
                 
                 elif self.state == STATE_GAME_OVER:
                     if event.key == pygame.K_r:
@@ -170,8 +184,14 @@ class SnakeGame:
         if (self.state != STATE_PLAYING and self.state != STATE_AUTO) or self.game_over:
             return
         
-        # Auto mode: use Hybrid A* algorithm to determine next direction
+        # Auto mode: use selected algorithm to determine next direction
         if self.state == STATE_AUTO:
+            # Select algorithm based on current setting
+            if self.algorithm == ALGORITHM_HYBRID_A_STAR:
+                get_next_direction = hybrid_a_star_get_next_direction
+            else:  # ALGORITHM_RRT_STAR
+                get_next_direction = rrt_star_get_next_direction
+            
             next_dir, path = get_next_direction(
                 snake_head=self.snake[0],
                 apple=self.apple,
@@ -291,10 +311,23 @@ class SnakeGame:
             indicator_x = WINDOW_SIZE // 2 - 100
             pygame.draw.circle(self.screen, YELLOW, (indicator_x, auto_y), 5)
         
+        # Algorithm selection (only show if in auto mode or about to enter auto mode)
+        if self.auto_mode:
+            algo_y = auto_y + 50
+            algo_name = "RRT*" if self.algorithm == ALGORITHM_RRT_STAR else "Hybrid A*"
+            algo_text = self.font.render(f"T - Algorithm: {algo_name}", True, BLUE)
+            algo_rect = algo_text.get_rect(center=(WINDOW_SIZE // 2, algo_y))
+            self.screen.blit(algo_text, algo_rect)
+        
         # Instructions
         instruction_text = self.small_font.render("Press 1, 2, 3 to select speed or A for auto mode", True, GRAY)
-        instruction_rect = instruction_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 40))
+        instruction_rect = instruction_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 60))
         self.screen.blit(instruction_text, instruction_rect)
+        
+        if self.auto_mode:
+            algo_instruction = self.small_font.render("Press T to toggle algorithm", True, GRAY)
+            algo_instruction_rect = algo_instruction.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 30))
+            self.screen.blit(algo_instruction, algo_instruction_rect)
         
         esc_text = self.small_font.render("Press ESC to quit", True, GRAY)
         esc_rect = esc_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 10))
@@ -340,10 +373,13 @@ class SnakeGame:
         score_text = self.font.render(f"Score: {self.score}", True, WHITE)
         self.screen.blit(score_text, (10, WINDOW_SIZE + 10))
         
-        # Draw mode indicator
+        # Draw mode indicator and algorithm
         if self.state == STATE_AUTO:
             mode_text = self.small_font.render("AUTO MODE", True, BLUE)
-            self.screen.blit(mode_text, (WINDOW_SIZE // 2 - 50, WINDOW_SIZE + 15))
+            self.screen.blit(mode_text, (WINDOW_SIZE // 2 - 50, WINDOW_SIZE + 10))
+            algo_name = "RRT*" if self.algorithm == ALGORITHM_RRT_STAR else "Hybrid A*"
+            algo_text = self.small_font.render(f"Algo: {algo_name} (Press T to switch)", True, BLUE)
+            self.screen.blit(algo_text, (WINDOW_SIZE // 2 - 100, WINDOW_SIZE + 30))
         
         # Draw high score
         high_score_text = self.small_font.render(f"High Score: {self.high_score}", True, YELLOW)
