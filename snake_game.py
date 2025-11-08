@@ -1,6 +1,7 @@
 import pygame
 import random
 import sys
+import os
 
 # Initialize Pygame
 pygame.init()
@@ -9,7 +10,12 @@ pygame.init()
 GRID_SIZE = 15
 CELL_SIZE = 30
 WINDOW_SIZE = GRID_SIZE * CELL_SIZE
-FPS = 10
+HIGH_SCORE_FILE = "high_score.txt"
+
+# Speed settings
+SPEED_SLOW = 6
+SPEED_MEDIUM = 10
+SPEED_FAST = 15
 
 # Colors
 BLACK = (0, 0, 0)
@@ -18,6 +24,8 @@ GREEN = (0, 255, 0)
 RED = (255, 0, 0)
 DARK_GREEN = (0, 200, 0)
 GRAY = (128, 128, 128)
+YELLOW = (255, 255, 0)
+BLUE = (0, 100, 255)
 
 # Directions
 UP = (0, -1)
@@ -25,13 +33,44 @@ DOWN = (0, 1)
 LEFT = (-1, 0)
 RIGHT = (1, 0)
 
+# Game states
+STATE_START = 0
+STATE_PLAYING = 1
+STATE_GAME_OVER = 2
+
 class SnakeGame:
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE + 50))
         pygame.display.set_caption("Snake Game")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 36)
+        self.title_font = pygame.font.Font(None, 48)
+        self.small_font = pygame.font.Font(None, 28)
+        
+        # Game state
+        self.state = STATE_START
+        self.game_speed = SPEED_MEDIUM  # Default to medium
+        self.high_score = self.load_high_score()
+        
         self.reset_game()
+    
+    def load_high_score(self):
+        """Load high score from file"""
+        if os.path.exists(HIGH_SCORE_FILE):
+            try:
+                with open(HIGH_SCORE_FILE, 'r') as f:
+                    return int(f.read().strip())
+            except:
+                return 0
+        return 0
+    
+    def save_high_score(self):
+        """Save high score to file"""
+        try:
+            with open(HIGH_SCORE_FILE, 'w') as f:
+                f.write(str(self.high_score))
+        except:
+            pass
     
     def reset_game(self):
         # Snake starts at 2 cells long in the center
@@ -57,12 +96,30 @@ class SnakeGame:
                 return False
             
             if event.type == pygame.KEYDOWN:
-                if self.game_over:
-                    if event.key == pygame.K_SPACE:
+                if self.state == STATE_START:
+                    # Speed selection
+                    if event.key == pygame.K_1 or event.key == pygame.K_KP1:
+                        self.game_speed = SPEED_SLOW
+                        self.state = STATE_PLAYING
+                        self.reset_game()
+                    elif event.key == pygame.K_2 or event.key == pygame.K_KP2:
+                        self.game_speed = SPEED_MEDIUM
+                        self.state = STATE_PLAYING
+                        self.reset_game()
+                    elif event.key == pygame.K_3 or event.key == pygame.K_KP3:
+                        self.game_speed = SPEED_FAST
+                        self.state = STATE_PLAYING
                         self.reset_game()
                     elif event.key == pygame.K_ESCAPE:
                         return False
-                else:
+                
+                elif self.state == STATE_GAME_OVER:
+                    if event.key == pygame.K_SPACE:
+                        self.state = STATE_START
+                    elif event.key == pygame.K_ESCAPE:
+                        return False
+                
+                elif self.state == STATE_PLAYING:
                     # Arrow keys
                     if event.key == pygame.K_UP and self.direction != DOWN:
                         self.next_direction = UP
@@ -87,7 +144,7 @@ class SnakeGame:
     
     def update(self):
         """Update game state"""
-        if self.game_over:
+        if self.state != STATE_PLAYING or self.game_over:
             return
         
         # Update direction
@@ -101,11 +158,19 @@ class SnakeGame:
         if (new_head[0] < 0 or new_head[0] >= GRID_SIZE or 
             new_head[1] < 0 or new_head[1] >= GRID_SIZE):
             self.game_over = True
+            self.state = STATE_GAME_OVER
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
             return
         
         # Check self collision
         if new_head in self.snake:
             self.game_over = True
+            self.state = STATE_GAME_OVER
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
             return
         
         # Move snake
@@ -124,43 +189,125 @@ class SnakeGame:
         # Clear screen
         self.screen.fill(BLACK)
         
-        if not self.game_over:
-            # Draw grid lines
-            for i in range(GRID_SIZE + 1):
-                pygame.draw.line(self.screen, GRAY, 
-                               (i * CELL_SIZE, 0), 
-                               (i * CELL_SIZE, WINDOW_SIZE), 1)
-                pygame.draw.line(self.screen, GRAY, 
-                               (0, i * CELL_SIZE), 
-                               (WINDOW_SIZE, i * CELL_SIZE), 1)
+        if self.state == STATE_START:
+            self.draw_start_screen()
+        elif self.state == STATE_PLAYING:
+            self.draw_game()
+        elif self.state == STATE_GAME_OVER:
+            self.draw_game()
+            self.draw_game_over()
+        
+        pygame.display.flip()
+    
+    def draw_start_screen(self):
+        """Draw the start screen with speed selection"""
+        # Title
+        title_text = self.title_font.render("SNAKE GAME", True, GREEN)
+        title_rect = title_text.get_rect(center=(WINDOW_SIZE // 2, 80))
+        self.screen.blit(title_text, title_rect)
+        
+        # High score
+        high_score_text = self.font.render(f"High Score: {self.high_score}", True, YELLOW)
+        high_score_rect = high_score_text.get_rect(center=(WINDOW_SIZE // 2, 140))
+        self.screen.blit(high_score_text, high_score_rect)
+        
+        # Speed selection
+        speed_title = self.font.render("Select Speed:", True, WHITE)
+        speed_title_rect = speed_title.get_rect(center=(WINDOW_SIZE // 2, 220))
+        self.screen.blit(speed_title, speed_title_rect)
+        
+        # Speed options
+        y_offset = 280
+        speeds = [
+            ("1 - Slow", SPEED_SLOW, self.game_speed == SPEED_SLOW),
+            ("2 - Medium", SPEED_MEDIUM, self.game_speed == SPEED_MEDIUM),
+            ("3 - Fast", SPEED_FAST, self.game_speed == SPEED_FAST)
+        ]
+        
+        for i, (label, speed, is_selected) in enumerate(speeds):
+            color = YELLOW if is_selected else WHITE
+            speed_text = self.font.render(label, True, color)
+            speed_rect = speed_text.get_rect(center=(WINDOW_SIZE // 2, y_offset + i * 50))
+            self.screen.blit(speed_text, speed_rect)
             
-            # Draw snake
-            for i, (x, y) in enumerate(self.snake):
-                color = GREEN if i == 0 else DARK_GREEN  # Head is brighter
-                pygame.draw.rect(self.screen, color, 
-                               (x * CELL_SIZE + 1, y * CELL_SIZE + 1, 
-                                CELL_SIZE - 2, CELL_SIZE - 2))
-            
-            # Draw apple
-            apple_x, apple_y = self.apple
-            pygame.draw.rect(self.screen, RED, 
-                           (apple_x * CELL_SIZE + 1, apple_y * CELL_SIZE + 1, 
+            # Draw indicator
+            if is_selected:
+                indicator_x = WINDOW_SIZE // 2 - 100
+                pygame.draw.circle(self.screen, YELLOW, (indicator_x, y_offset + i * 50), 5)
+        
+        # Instructions
+        instruction_text = self.small_font.render("Press 1, 2, or 3 to select speed and start", True, GRAY)
+        instruction_rect = instruction_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 40))
+        self.screen.blit(instruction_text, instruction_rect)
+        
+        esc_text = self.small_font.render("Press ESC to quit", True, GRAY)
+        esc_rect = esc_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE - 10))
+        self.screen.blit(esc_text, esc_rect)
+    
+    def draw_game(self):
+        """Draw the game screen"""
+        # Draw grid lines
+        for i in range(GRID_SIZE + 1):
+            pygame.draw.line(self.screen, GRAY, 
+                           (i * CELL_SIZE, 0), 
+                           (i * CELL_SIZE, WINDOW_SIZE), 1)
+            pygame.draw.line(self.screen, GRAY, 
+                           (0, i * CELL_SIZE), 
+                           (WINDOW_SIZE, i * CELL_SIZE), 1)
+        
+        # Draw snake
+        for i, (x, y) in enumerate(self.snake):
+            color = GREEN if i == 0 else DARK_GREEN  # Head is brighter
+            pygame.draw.rect(self.screen, color, 
+                           (x * CELL_SIZE + 1, y * CELL_SIZE + 1, 
                             CELL_SIZE - 2, CELL_SIZE - 2))
+        
+        # Draw apple
+        apple_x, apple_y = self.apple
+        pygame.draw.rect(self.screen, RED, 
+                       (apple_x * CELL_SIZE + 1, apple_y * CELL_SIZE + 1, 
+                        CELL_SIZE - 2, CELL_SIZE - 2))
         
         # Draw score
         score_text = self.font.render(f"Score: {self.score}", True, WHITE)
         self.screen.blit(score_text, (10, WINDOW_SIZE + 10))
         
-        # Draw game over message
-        if self.game_over:
-            game_over_text = self.font.render("Game Over!", True, WHITE)
-            restart_text = self.font.render("Press SPACE to restart or ESC to quit", True, WHITE)
-            text_rect = game_over_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 - 20))
-            restart_rect = restart_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 20))
-            self.screen.blit(game_over_text, text_rect)
-            self.screen.blit(restart_text, restart_rect)
+        # Draw high score
+        high_score_text = self.small_font.render(f"High Score: {self.high_score}", True, YELLOW)
+        self.screen.blit(high_score_text, (WINDOW_SIZE - 150, WINDOW_SIZE + 15))
+    
+    def draw_game_over(self):
+        """Draw game over overlay"""
+        # Semi-transparent overlay
+        overlay = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+        overlay.set_alpha(180)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, 0))
         
-        pygame.display.flip()
+        # Game over text
+        game_over_text = self.title_font.render("Game Over!", True, RED)
+        game_over_rect = game_over_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 - 60))
+        self.screen.blit(game_over_text, game_over_rect)
+        
+        # Final score
+        final_score_text = self.font.render(f"Final Score: {self.score}", True, WHITE)
+        final_score_rect = final_score_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 - 10))
+        self.screen.blit(final_score_text, final_score_rect)
+        
+        # High score update
+        if self.score == self.high_score and self.score > 0:
+            new_high_text = self.font.render("New High Score!", True, YELLOW)
+            new_high_rect = new_high_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 30))
+            self.screen.blit(new_high_text, new_high_rect)
+        
+        # Instructions
+        restart_text = self.small_font.render("Press SPACE to return to menu", True, WHITE)
+        restart_rect = restart_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 70))
+        self.screen.blit(restart_text, restart_rect)
+        
+        esc_text = self.small_font.render("Press ESC to quit", True, GRAY)
+        esc_rect = esc_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 100))
+        self.screen.blit(esc_text, esc_rect)
     
     def run(self):
         """Main game loop"""
@@ -169,7 +316,8 @@ class SnakeGame:
             running = self.handle_input()
             self.update()
             self.draw()
-            self.clock.tick(FPS)
+            # Use dynamic FPS based on selected speed
+            self.clock.tick(self.game_speed)
         
         pygame.quit()
         sys.exit()
