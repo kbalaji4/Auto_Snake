@@ -34,6 +34,82 @@ def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
     return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
 
+def distance_to_nearest_obstacle(position: Tuple[int, int], obstacles: Set[Tuple[int, int]], grid_size: int) -> float:
+    """
+    Calculate the Manhattan distance to the nearest obstacle.
+    Returns a large value if no obstacles are nearby (within reasonable search distance).
+    
+    Args:
+        position: Current position (x, y)
+        obstacles: Set of obstacle positions
+        grid_size: Size of the grid
+    
+    Returns:
+        Distance to nearest obstacle, or a large value if no obstacles nearby
+    """
+    if not obstacles:
+        return grid_size  # No obstacles, return max distance
+    
+    min_distance = float('inf')
+    x, y = position
+    
+    # Search within a reasonable radius (e.g., up to 5 cells away)
+    search_radius = min(5, grid_size)
+    
+    for obs_x, obs_y in obstacles:
+        distance = abs(x - obs_x) + abs(y - obs_y)
+        if distance < min_distance:
+            min_distance = distance
+            if min_distance == 0:  # Adjacent to obstacle
+                return 0
+    
+    # If no obstacle found within search radius, return max search radius
+    if min_distance == float('inf'):
+        return search_radius
+    
+    return min_distance
+
+
+def enhanced_heuristic(
+    position: Tuple[int, int],
+    goal: Tuple[int, int],
+    obstacles: Set[Tuple[int, int]],
+    grid_size: int,
+    obstacle_penalty_weight: float = 0.5
+) -> float:
+    """
+    Enhanced heuristic that combines distance to goal with obstacle avoidance.
+    Prefers paths that stay away from obstacles.
+    
+    Args:
+        position: Current position (x, y)
+        goal: Goal position (x, y)
+        obstacles: Set of obstacle positions
+        grid_size: Size of the grid
+        obstacle_penalty_weight: Weight for obstacle penalty (higher = more avoidance)
+    
+    Returns:
+        Heuristic value (lower is better)
+    """
+    # Base heuristic: Manhattan distance to goal
+    distance_to_goal = manhattan_distance(position, goal)
+    
+    # Obstacle penalty: prefer positions farther from obstacles
+    distance_to_obstacle = distance_to_nearest_obstacle(position, obstacles, grid_size)
+    
+    # Convert distance to obstacle into a penalty
+    # Closer to obstacle = higher penalty
+    # We want to maximize distance_to_obstacle, so we subtract it from a max value
+    max_obstacle_distance = min(5, grid_size)  # Maximum reasonable distance to check
+    obstacle_penalty = max_obstacle_distance - distance_to_obstacle
+    
+    # Combine: distance to goal + penalty for being near obstacles
+    # The penalty is weighted so it doesn't override the goal-seeking behavior
+    heuristic = distance_to_goal + (obstacle_penalty * obstacle_penalty_weight)
+    
+    return heuristic
+
+
 def get_neighbors(position: Tuple[int, int], grid_size: int, obstacles: Set[Tuple[int, int]]) -> List[Tuple[int, int]]:
     """
     Get valid neighboring positions (up, down, left, right).
@@ -104,11 +180,11 @@ def hybrid_a_star(
     open_set = []
     closed_set: Set[Tuple[int, int]] = set()
     
-    # Create start node
+    # Create start node with enhanced heuristic
     start_node = Node(
         position=start,
         g_cost=0,
-        h_cost=manhattan_distance(start, goal)
+        h_cost=enhanced_heuristic(start, goal, obstacles, grid_size)
     )
     
     heapq.heappush(open_set, start_node)
@@ -155,7 +231,7 @@ def hybrid_a_star(
             # Check if this is a better path to this neighbor
             if neighbor_pos not in g_costs or tentative_g_cost < g_costs[neighbor_pos]:
                 g_costs[neighbor_pos] = tentative_g_cost
-                h_cost = manhattan_distance(neighbor_pos, goal)
+                h_cost = enhanced_heuristic(neighbor_pos, goal, obstacles, grid_size)
                 
                 neighbor_node = Node(
                     position=neighbor_pos,
