@@ -80,9 +80,10 @@ def hybrid_a_star(
     goal: Tuple[int, int],
     obstacles: Set[Tuple[int, int]],
     grid_size: int
-) -> Optional[List[Tuple[int, int]]]:
+) -> Tuple[Optional[List[Tuple[int, int]]], Optional[List[Tuple[int, int]]]]:
     """
     Hybrid A* algorithm to find path from start to goal.
+    Also tracks the longest path found during exploration.
     
     Args:
         start: Starting position (snake head)
@@ -91,11 +92,13 @@ def hybrid_a_star(
         grid_size: Size of the grid
     
     Returns:
-        List of positions forming the path from start to goal, or None if no path exists
+        Tuple of (path_to_goal, longest_path):
+        - path_to_goal: List of positions forming the path from start to goal, or None if no path exists
+        - longest_path: List of positions forming the longest path found during exploration, or None
     """
     # If start or goal is in obstacles, no path exists
     if start in obstacles or goal in obstacles:
-        return None
+        return None, None
     
     # Initialize open and closed sets
     open_set = []
@@ -113,6 +116,10 @@ def hybrid_a_star(
     # Dictionary to track best g_cost for each position
     g_costs = {start: 0}
     
+    # Track longest path found during exploration
+    max_g_cost = 0
+    longest_path_node = start_node
+    
     while open_set:
         # Get node with lowest f_cost
         current_node = heapq.heappop(open_set)
@@ -124,9 +131,16 @@ def hybrid_a_star(
         # Add to closed set
         closed_set.add(current_node.position)
         
+        # Track longest path (node with maximum g_cost)
+        if current_node.g_cost > max_g_cost:
+            max_g_cost = current_node.g_cost
+            longest_path_node = current_node
+        
         # Check if goal reached
         if current_node.position == goal:
-            return reconstruct_path(current_node)
+            path_to_goal = reconstruct_path(current_node)
+            longest_path = reconstruct_path(longest_path_node)
+            return path_to_goal, longest_path
         
         # Explore neighbors
         neighbors = get_neighbors(current_node.position, grid_size, obstacles)
@@ -152,8 +166,13 @@ def hybrid_a_star(
                 
                 heapq.heappush(open_set, neighbor_node)
     
-    # No path found
-    return None
+    # No path to goal found, return longest path found during exploration
+    if max_g_cost > 0:
+        longest_path = reconstruct_path(longest_path_node)
+        return None, longest_path
+    
+    # No path found at all
+    return None, None
 
 
 def get_next_direction(
@@ -179,30 +198,35 @@ def get_next_direction(
     # Convert snake body to set of obstacles (excluding head for pathfinding)
     obstacles = set(snake_body[1:])  # Exclude head, include rest of body
     
-    # Find path using Hybrid A*
-    path = hybrid_a_star(snake_head, apple, obstacles, grid_size)
+    # Find path using Hybrid A* (returns both path to goal and longest path)
+    path_to_goal, longest_path = hybrid_a_star(snake_head, apple, obstacles, grid_size)
     
-    if path is None or len(path) < 2:
-        # No path found, try to find a safe move that doesn't cause immediate collision
-        # This is a fallback strategy
-        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
-        
-        # Try to move in a direction that doesn't hit obstacles
-        for dx, dy in directions:
-            next_pos = (snake_head[0] + dx, snake_head[1] + dy)
-            # Check boundaries
-            if 0 <= next_pos[0] < grid_size and 0 <= next_pos[1] < grid_size:
-                # Check if not an obstacle
-                if next_pos not in obstacles:
-                    return (dx, dy)
-        
-        # If no safe move, return current direction (will likely cause game over)
-        return current_direction
+    # Use path to goal if available
+    if path_to_goal is not None and len(path_to_goal) >= 2:
+        next_pos = path_to_goal[1]  # path_to_goal[0] is current head, path_to_goal[1] is next position
+        dx = next_pos[0] - snake_head[0]
+        dy = next_pos[1] - snake_head[1]
+        return (dx, dy)
     
-    # Path found, return direction to first step
-    next_pos = path[1]  # path[0] is current head, path[1] is next position
-    dx = next_pos[0] - snake_head[0]
-    dy = next_pos[1] - snake_head[1]
+    # No path to apple found, use the longest path tracked during A* search
+    if longest_path is not None and len(longest_path) >= 2:
+        next_pos = longest_path[1]  # longest_path[0] is current head, longest_path[1] is next position
+        dx = next_pos[0] - snake_head[0]
+        dy = next_pos[1] - snake_head[1]
+        return (dx, dy)
     
-    return (dx, dy)
+    # Fallback: try to find any safe move that doesn't cause immediate collision
+    directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
+    
+    # Try to move in a direction that doesn't hit obstacles
+    for dx, dy in directions:
+        next_pos = (snake_head[0] + dx, snake_head[1] + dy)
+        # Check boundaries
+        if 0 <= next_pos[0] < grid_size and 0 <= next_pos[1] < grid_size:
+            # Check if not an obstacle
+            if next_pos not in obstacles:
+                return (dx, dy)
+    
+    # If no safe move, return current direction (will likely cause game over)
+    return current_direction
 
