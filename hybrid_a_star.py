@@ -70,23 +70,245 @@ def distance_to_nearest_obstacle(position: Tuple[int, int], obstacles: Set[Tuple
     return min_distance
 
 
+def count_reachable_cells(
+    start: Tuple[int, int],
+    obstacles: Set[Tuple[int, int]],
+    grid_size: int,
+    max_search: int = 50
+) -> int:
+    """
+    Count how many cells are reachable from a given position using BFS.
+    This helps determine if the snake will be trapped.
+    
+    Args:
+        start: Starting position
+        obstacles: Set of obstacle positions
+        grid_size: Size of the grid
+        max_search: Maximum number of cells to search (for performance)
+    
+    Returns:
+        Number of reachable cells (capped at max_search)
+    """
+    if start in obstacles:
+        return 0
+    
+    from collections import deque
+    
+    queue = deque([start])
+    visited = {start}
+    
+    while queue and len(visited) < max_search:
+        current = queue.popleft()
+        neighbors = get_neighbors(current, grid_size, obstacles)
+        
+        for neighbor in neighbors:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+    
+    return len(visited)
+
+
+def check_reachability_after_path(
+    path: List[Tuple[int, int]],
+    snake_body: List[Tuple[int, int]],
+    apple: Tuple[int, int],
+    grid_size: int,
+    cache: Optional[dict] = None
+) -> float:
+    """
+    Check how many free cells are reachable after following a path, considering tail movement.
+    This helps avoid paths that lead to trapped positions.
+    
+    Args:
+        path: Path to follow (starting from current head)
+        snake_body: Current snake body positions (including head)
+        apple: Position of apple
+        grid_size: Size of the grid
+    
+    Returns:
+        Ratio of free cells that are reachable (0.0 to 1.0)
+    """
+    if not path or len(path) < 2:
+        return 0.0
+    
+    # Simulate snake moving along the path
+    simulated_snake = snake_body.copy()
+    
+    # Follow the path step by step
+    for i in range(1, len(path)):
+        next_pos = path[i]
+        
+        # Move head to next position
+        simulated_snake.insert(0, next_pos)
+        
+        # If we eat the apple, snake grows (tail doesn't move)
+        if next_pos != apple:
+            # Snake doesn't grow, tail moves forward (remove last element)
+            if len(simulated_snake) > 1:
+                simulated_snake.pop()
+    
+    # Now check reachability from the end position
+    end_position = simulated_snake[0]
+    obstacles_after_path = set(simulated_snake[1:])  # Exclude head
+    
+    # Count all free cells
+    free_cells = []
+    for x in range(grid_size):
+        for y in range(grid_size):
+            pos = (x, y)
+            if pos not in obstacles_after_path and pos != end_position:
+                free_cells.append(pos)
+    
+    if len(free_cells) == 0:
+        return 0.0
+    
+    # Count how many free cells are reachable using BFS
+    from collections import deque
+    queue = deque([end_position])
+    visited = {end_position}
+    
+    while queue:
+        current = queue.popleft()
+        neighbors = get_neighbors(current, grid_size, obstacles_after_path)
+        
+        for neighbor in neighbors:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+    
+    # Count how many free cells were reached
+    reachable_count = sum(1 for cell in free_cells if cell in visited)
+    reachability_ratio = reachable_count / len(free_cells)
+    
+    return reachability_ratio
+
+
+def check_reachability_to_test_apple(
+    position: Tuple[int, int],
+    obstacles: Set[Tuple[int, int]],
+    grid_size: int,
+    num_tests: int = 3,
+    cache: Optional[dict] = None
+) -> float:
+    """
+    Check if the snake can reach randomly placed test apples from a given position.
+    This helps avoid paths that lead to trapped positions.
+    
+    Args:
+        position: Position to check from
+        obstacles: Set of obstacle positions
+        grid_size: Size of the grid
+        num_tests: Number of random test apples to check
+        cache: Optional cache dictionary to store results
+    
+    Returns:
+        Ratio of test apples that can be reached (0.0 to 1.0)
+    """
+    if position in obstacles:
+        return 0.0
+    
+    # Check cache first (obstacles are constant within a single A* search)
+    if cache is not None:
+        if position in cache:
+            return cache[position]
+    
+    # Generate random test apple positions
+    free_cells = []
+    for x in range(grid_size):
+        for y in range(grid_size):
+            pos = (x, y)
+            if pos not in obstacles and pos != position:
+                free_cells.append(pos)
+    
+    if len(free_cells) < num_tests:
+        num_tests = len(free_cells)
+    
+    if num_tests == 0:
+        result = 0.0
+        if cache is not None:
+            cache[position] = result
+        return result
+    
+    import random
+    test_apples = random.sample(free_cells, min(num_tests, len(free_cells)))
+    
+    # Check how many test apples are reachable
+    reachable_count = 0
+    for test_apple in test_apples:
+        # Quick BFS to check if test apple is reachable
+        from collections import deque
+        queue = deque([position])
+        visited = {position}
+        found = False
+        
+        while queue and not found:
+            current = queue.popleft()
+            if current == test_apple:
+                found = True
+                break
+            
+            neighbors = get_neighbors(current, grid_size, obstacles)
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+                    # Limit search to avoid performance issues
+                    if len(visited) > 100:
+                        break
+        
+        if found:
+            reachable_count += 1
+    
+    result = reachable_count / num_tests
+    # Cache result (obstacles are constant within a single A* search)
+    if cache is not None:
+        cache[position] = result
+    return result
+
+
+def count_free_neighbors(
+    position: Tuple[int, int],
+    obstacles: Set[Tuple[int, int]],
+    grid_size: int
+) -> int:
+    """
+    Count the number of free neighbors (up, down, left, right) from a position.
+    More neighbors = more options = less likely to get trapped.
+    
+    Args:
+        position: Position to check
+        obstacles: Set of obstacle positions
+        grid_size: Size of the grid
+    
+    Returns:
+        Number of free neighbors (0-4)
+    """
+    neighbors = get_neighbors(position, grid_size, obstacles)
+    return len(neighbors)
+
+
 def enhanced_heuristic(
     position: Tuple[int, int],
     goal: Tuple[int, int],
     obstacles: Set[Tuple[int, int]],
     grid_size: int,
-    obstacle_penalty_weight: float = 0.5
+    reachability_weight: float = 2.0,
+    neighbor_weight: float = 1.5,
+    cache: Optional[dict] = None
 ) -> float:
     """
-    Enhanced heuristic that combines distance to goal with obstacle avoidance.
-    Prefers paths that stay away from obstacles.
+    Enhanced heuristic that combines distance to goal with neighbor count and reachability.
+    Prefers paths that lead to positions with more free neighbors (more exploration options).
     
     Args:
         position: Current position (x, y)
         goal: Goal position (x, y)
         obstacles: Set of obstacle positions
         grid_size: Size of the grid
-        obstacle_penalty_weight: Weight for obstacle penalty (higher = more avoidance)
+        reachability_weight: Weight for reachability penalty (higher = more avoidance of traps)
+        neighbor_weight: Weight for neighbor count bonus (higher = more preference for open spaces)
+        cache: Optional cache for reachability checks
     
     Returns:
         Heuristic value (lower is better)
@@ -94,18 +316,31 @@ def enhanced_heuristic(
     # Base heuristic: Manhattan distance to goal
     distance_to_goal = manhattan_distance(position, goal)
     
-    # Obstacle penalty: prefer positions farther from obstacles
+    # Count free neighbors - more neighbors = more options = better
+    num_neighbors = count_free_neighbors(position, obstacles, grid_size)
+    max_neighbors = 4  # Maximum possible neighbors in a grid
+    # Convert to penalty: fewer neighbors = higher penalty
+    # If we have 4 neighbors, penalty is 0. If we have 0 neighbors, penalty is max
+    neighbor_penalty = (max_neighbors - num_neighbors) * neighbor_weight
+    
+    # Check reachability - can we reach test apples from this position?
+    # Lower reachability means higher risk of getting trapped
+    # Only check reachability for positions that might be problematic (near obstacles)
+    # to save computation
     distance_to_obstacle = distance_to_nearest_obstacle(position, obstacles, grid_size)
     
-    # Convert distance to obstacle into a penalty
-    # Closer to obstacle = higher penalty
-    # We want to maximize distance_to_obstacle, so we subtract it from a max value
-    max_obstacle_distance = min(5, grid_size)  # Maximum reasonable distance to check
-    obstacle_penalty = max_obstacle_distance - distance_to_obstacle
+    # Only do expensive reachability check if we're close to obstacles
+    # or if we're far from the goal (might be going into a trap)
+    if distance_to_obstacle <= 2 or distance_to_goal > grid_size // 2:
+        reachability = check_reachability_to_test_apple(position, obstacles, grid_size, num_tests=3, cache=cache)
+        # Convert reachability to penalty: low reachability = high penalty
+        trap_penalty = (1.0 - reachability) * reachability_weight
+    else:
+        # Assume good reachability if we're far from obstacles
+        trap_penalty = 0.0
     
-    # Combine: distance to goal + penalty for being near obstacles
-    # The penalty is weighted so it doesn't override the goal-seeking behavior
-    heuristic = distance_to_goal + (obstacle_penalty * obstacle_penalty_weight)
+    # Combine: distance to goal + penalty for few neighbors + penalty for low reachability
+    heuristic = distance_to_goal + neighbor_penalty + trap_penalty
     
     return heuristic
 
@@ -176,6 +411,9 @@ def hybrid_a_star(
     if start in obstacles or goal in obstacles:
         return None, None
     
+    # Cache for reachability checks to avoid redundant calculations
+    reachability_cache = {}
+    
     # Initialize open and closed sets
     open_set = []
     closed_set: Set[Tuple[int, int]] = set()
@@ -184,7 +422,7 @@ def hybrid_a_star(
     start_node = Node(
         position=start,
         g_cost=0,
-        h_cost=enhanced_heuristic(start, goal, obstacles, grid_size)
+        h_cost=enhanced_heuristic(start, goal, obstacles, grid_size, cache=reachability_cache)
     )
     
     heapq.heappush(open_set, start_node)
@@ -231,7 +469,7 @@ def hybrid_a_star(
             # Check if this is a better path to this neighbor
             if neighbor_pos not in g_costs or tentative_g_cost < g_costs[neighbor_pos]:
                 g_costs[neighbor_pos] = tentative_g_cost
-                h_cost = enhanced_heuristic(neighbor_pos, goal, obstacles, grid_size)
+                h_cost = enhanced_heuristic(neighbor_pos, goal, obstacles, grid_size, cache=reachability_cache)
                 
                 neighbor_node = Node(
                     position=neighbor_pos,
@@ -337,28 +575,67 @@ def get_next_direction(
     # Find path using Hybrid A* (returns both path to goal and longest path)
     path_to_goal, longest_path = hybrid_a_star(snake_head, apple, obstacles, grid_size)
     
-    # Validate and use path to goal if available
+    # Prioritize reachability over goal-seeking to avoid traps
+    # Check reachability for all candidate paths
+    best_path = None
+    best_reachability = -1.0
+    
+    # Check path to goal
     if path_to_goal is not None and len(path_to_goal) >= 2:
         # Validate path considering moving tail
         if validate_path_with_moving_tail(path_to_goal, snake_body, apple, grid_size):
-            next_pos = path_to_goal[1]  # path_to_goal[0] is current head, path_to_goal[1] is next position
-            dx = next_pos[0] - snake_head[0]
-            dy = next_pos[1] - snake_head[1]
-            return (dx, dy), path_to_goal
+            # Check reachability after following this path
+            reachability = check_reachability_after_path(path_to_goal, snake_body, apple, grid_size)
+            # Only consider path to goal if it maintains very good reachability (>= 0.8)
+            # Otherwise, we risk trapping ourselves
+            if reachability >= 0.8 and reachability > best_reachability:
+                best_path = path_to_goal
+                best_reachability = reachability
     
-    # No valid path to apple found, try longest path
+    # Check longest path
     if longest_path is not None and len(longest_path) >= 2:
         # Validate longest path considering moving tail
         if validate_path_with_moving_tail(longest_path, snake_body, apple, grid_size):
-            next_pos = longest_path[1]  # longest_path[0] is current head, longest_path[1] is next position
-            dx = next_pos[0] - snake_head[0]
-            dy = next_pos[1] - snake_head[1]
-            return (dx, dy), longest_path
+            # Check reachability after following this path
+            reachability = check_reachability_after_path(longest_path, snake_body, apple, grid_size)
+            # Prefer longest path if it has better reachability
+            if reachability > best_reachability:
+                best_path = longest_path
+                best_reachability = reachability
     
-    # Fallback: try to find any safe move that doesn't cause immediate collision
+    # If we found a good path, use it
+    if best_path is not None and len(best_path) >= 2:
+        next_pos = best_path[1]
+        dx = next_pos[0] - snake_head[0]
+        dy = next_pos[1] - snake_head[1]
+        return (dx, dy), best_path
+    
+    # Fallback: Check all immediate neighbors for best reachability
+    # This helps when both paths have poor reachability
     directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
+    best_neighbor = None
+    best_neighbor_reachability = -1.0
     
-    # Try to move in a direction that doesn't hit obstacles
+    for dx, dy in directions:
+        next_pos = (snake_head[0] + dx, snake_head[1] + dy)
+        # Check boundaries
+        if 0 <= next_pos[0] < grid_size and 0 <= next_pos[1] < grid_size:
+            # Check if not an obstacle (excluding tail)
+            if next_pos not in obstacles:
+                # Create a simple path with just this move
+                simple_path = [snake_head, next_pos]
+                # Check reachability after this move
+                if validate_path_with_moving_tail(simple_path, snake_body, apple, grid_size):
+                    reachability = check_reachability_after_path(simple_path, snake_body, apple, grid_size)
+                    if reachability > best_neighbor_reachability:
+                        best_neighbor = (dx, dy)
+                        best_neighbor_reachability = reachability
+    
+    # Use the neighbor with best reachability
+    if best_neighbor is not None:
+        return best_neighbor, [snake_head, (snake_head[0] + best_neighbor[0], snake_head[1] + best_neighbor[1])]
+    
+    # Final fallback: try any safe move that doesn't cause immediate collision
     for dx, dy in directions:
         next_pos = (snake_head[0] + dx, snake_head[1] + dy)
         # Check boundaries

@@ -206,8 +206,11 @@ class SnakeGame:
                 self.save_high_score()
             return
         
-        # Check self collision
-        if new_head in self.snake:
+        # Check self collision (exclude tail since it will move forward)
+        # The tail will move out of the way when we pop it, so we only check collision
+        # with the body excluding the tail
+        body_without_tail = self.snake[:-1] if len(self.snake) > 1 else self.snake
+        if new_head in body_without_tail:
             self.game_over = True
             self.state = STATE_GAME_OVER
             if self.score > self.high_score:
