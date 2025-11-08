@@ -374,6 +374,7 @@ class SnakeGame:
         self.screen.blit(score_text, (10, WINDOW_SIZE + 10))
         
         # Draw mode indicator and algorithm
+        # Draw mode indicator and algorithm
         if self.state == STATE_AUTO:
             mode_text = self.small_font.render("AUTO MODE", True, BLUE)
             self.screen.blit(mode_text, (WINDOW_SIZE // 2 - 50, WINDOW_SIZE + 10))
