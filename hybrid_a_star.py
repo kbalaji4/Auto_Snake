@@ -257,7 +257,7 @@ def get_next_direction(
     snake_body: List[Tuple[int, int]],
     grid_size: int,
     current_direction: Tuple[int, int]
-) -> Optional[Tuple[int, int]]:
+) -> Tuple[Optional[Tuple[int, int]], Optional[List[Tuple[int, int]]]]:
     """
     Get the next direction for the snake to move towards the apple.
     
@@ -269,7 +269,9 @@ def get_next_direction(
         current_direction: Current direction the snake is moving (for fallback)
     
     Returns:
-        Next direction tuple (dx, dy), or None if no valid path exists
+        Tuple of (next_direction, path):
+        - next_direction: Next direction tuple (dx, dy), or None if no valid path exists
+        - path: The path being followed (for visualization), or None
     """
     # Convert snake body to set of obstacles (excluding head for pathfinding)
     obstacles = set(snake_body[1:])  # Exclude head, include rest of body
@@ -282,14 +284,14 @@ def get_next_direction(
         next_pos = path_to_goal[1]  # path_to_goal[0] is current head, path_to_goal[1] is next position
         dx = next_pos[0] - snake_head[0]
         dy = next_pos[1] - snake_head[1]
-        return (dx, dy)
+        return (dx, dy), path_to_goal
     
     # No path to apple found, use the longest path tracked during A* search
     if longest_path is not None and len(longest_path) >= 2:
         next_pos = longest_path[1]  # longest_path[0] is current head, longest_path[1] is next position
         dx = next_pos[0] - snake_head[0]
         dy = next_pos[1] - snake_head[1]
-        return (dx, dy)
+        return (dx, dy), longest_path
     
     # Fallback: try to find any safe move that doesn't cause immediate collision
     directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
@@ -301,8 +303,9 @@ def get_next_direction(
         if 0 <= next_pos[0] < grid_size and 0 <= next_pos[1] < grid_size:
             # Check if not an obstacle
             if next_pos not in obstacles:
-                return (dx, dy)
+                # Return a simple path with just the next position
+                return (dx, dy), [snake_head, next_pos]
     
     # If no safe move, return current direction (will likely cause game over)
-    return current_direction
+    return current_direction, None
 

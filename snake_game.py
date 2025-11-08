@@ -54,6 +54,7 @@ class SnakeGame:
         self.game_speed = SPEED_MEDIUM  # Default to medium
         self.high_score = self.load_high_score()
         self.auto_mode = False
+        self.current_path = None  # Path for visualization in auto mode
         
         self.reset_game()
     
@@ -163,17 +164,22 @@ class SnakeGame:
         
         # Auto mode: use Hybrid A* algorithm to determine next direction
         if self.state == STATE_AUTO:
-            next_dir = get_next_direction(
+            next_dir, path = get_next_direction(
                 snake_head=self.snake[0],
                 apple=self.apple,
                 snake_body=self.snake,
                 grid_size=GRID_SIZE,
                 current_direction=self.direction
             )
+            # Store path for visualization
+            self.current_path = path
             if next_dir:
                 # Only update if the new direction is valid (not opposite of current)
                 if (next_dir[0] * -1, next_dir[1] * -1) != self.direction:
                     self.next_direction = next_dir
+        else:
+            # Clear path when not in auto mode
+            self.current_path = None
         
         # Update direction (for both manual and auto mode)
         self.direction = self.next_direction
@@ -293,6 +299,18 @@ class SnakeGame:
             pygame.draw.line(self.screen, GRAY, 
                            (0, i * CELL_SIZE), 
                            (WINDOW_SIZE, i * CELL_SIZE), 1)
+        
+        # Draw path visualization in auto mode (before snake so it appears behind)
+        if self.state == STATE_AUTO and self.current_path is not None:
+            # Draw path cells in blue (skip the first cell which is the snake head)
+            for i, (x, y) in enumerate(self.current_path[1:], 1):
+                # Don't draw if it's the apple position (will be drawn in red)
+                if (x, y) != self.apple:
+                    # Use semi-transparent blue for path cells
+                    path_surface = pygame.Surface((CELL_SIZE - 2, CELL_SIZE - 2))
+                    path_surface.set_alpha(150)  # Semi-transparent
+                    path_surface.fill(BLUE)
+                    self.screen.blit(path_surface, (x * CELL_SIZE + 1, y * CELL_SIZE + 1))
         
         # Draw snake
         for i, (x, y) in enumerate(self.snake):
