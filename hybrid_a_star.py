@@ -251,6 +251,63 @@ def hybrid_a_star(
     return None, None
 
 
+def validate_path_with_moving_tail(
+    path: List[Tuple[int, int]],
+    snake_body: List[Tuple[int, int]],
+    apple: Tuple[int, int],
+    grid_size: int
+) -> bool:
+    """
+    Validate a path considering that the snake's tail moves forward each step.
+    As the snake moves along the path, the tail position changes, so obstacles
+    that exist now might not exist in future steps.
+    
+    Args:
+        path: List of positions forming the path (starting from current head)
+        snake_body: Current snake body positions (including head)
+        apple: Position of apple
+        grid_size: Size of the grid
+    
+    Returns:
+        True if path is valid considering moving tail, False otherwise
+    """
+    if not path or len(path) < 2:
+        return False
+    
+    # Simulate the snake moving along the path
+    simulated_snake = snake_body.copy()
+    
+    # Check each step in the path (skip first position as it's the current head)
+    for i in range(1, len(path)):
+        next_pos = path[i]
+        
+        # Check boundaries
+        if (next_pos[0] < 0 or next_pos[0] >= grid_size or 
+            next_pos[1] < 0 or next_pos[1] >= grid_size):
+            return False
+        
+        # Check collision with current snake body (excluding tail which will move)
+        # The tail (last element) will move forward, so we exclude it from collision check
+        obstacles = set(simulated_snake[:-1]) if len(simulated_snake) > 1 else set()
+        
+        if next_pos in obstacles:
+            return False
+        
+        # Simulate snake movement: move head to next position
+        simulated_snake.insert(0, next_pos)
+        
+        # If we eat the apple, snake grows (tail doesn't move)
+        if next_pos == apple:
+            # Snake grows, so we keep the tail
+            pass
+        else:
+            # Snake doesn't grow, tail moves forward (remove last element)
+            if len(simulated_snake) > 1:
+                simulated_snake.pop()
+    
+    return True
+
+
 def get_next_direction(
     snake_head: Tuple[int, int],
     apple: Tuple[int, int],
@@ -274,24 +331,29 @@ def get_next_direction(
         - path: The path being followed (for visualization), or None
     """
     # Convert snake body to set of obstacles (excluding head for pathfinding)
-    obstacles = set(snake_body[1:])  # Exclude head, include rest of body
+    # Note: We exclude the tail as well since it will move forward each step
+    obstacles = set(snake_body[1:-1]) if len(snake_body) > 2 else set(snake_body[1:])
     
     # Find path using Hybrid A* (returns both path to goal and longest path)
     path_to_goal, longest_path = hybrid_a_star(snake_head, apple, obstacles, grid_size)
     
-    # Use path to goal if available
+    # Validate and use path to goal if available
     if path_to_goal is not None and len(path_to_goal) >= 2:
-        next_pos = path_to_goal[1]  # path_to_goal[0] is current head, path_to_goal[1] is next position
-        dx = next_pos[0] - snake_head[0]
-        dy = next_pos[1] - snake_head[1]
-        return (dx, dy), path_to_goal
+        # Validate path considering moving tail
+        if validate_path_with_moving_tail(path_to_goal, snake_body, apple, grid_size):
+            next_pos = path_to_goal[1]  # path_to_goal[0] is current head, path_to_goal[1] is next position
+            dx = next_pos[0] - snake_head[0]
+            dy = next_pos[1] - snake_head[1]
+            return (dx, dy), path_to_goal
     
-    # No path to apple found, use the longest path tracked during A* search
+    # No valid path to apple found, try longest path
     if longest_path is not None and len(longest_path) >= 2:
-        next_pos = longest_path[1]  # longest_path[0] is current head, longest_path[1] is next position
-        dx = next_pos[0] - snake_head[0]
-        dy = next_pos[1] - snake_head[1]
-        return (dx, dy), longest_path
+        # Validate longest path considering moving tail
+        if validate_path_with_moving_tail(longest_path, snake_body, apple, grid_size):
+            next_pos = longest_path[1]  # longest_path[0] is current head, longest_path[1] is next position
+            dx = next_pos[0] - snake_head[0]
+            dy = next_pos[1] - snake_head[1]
+            return (dx, dy), longest_path
     
     # Fallback: try to find any safe move that doesn't cause immediate collision
     directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right

@@ -127,7 +127,15 @@ class SnakeGame:
                         return False
                 
                 elif self.state == STATE_GAME_OVER:
-                    if event.key == pygame.K_SPACE:
+                    if event.key == pygame.K_r:
+                        # Restart with current settings
+                        self.reset_game()
+                        # Restore the previous state (auto or playing)
+                        if self.auto_mode:
+                            self.state = STATE_AUTO
+                        else:
+                            self.state = STATE_PLAYING
+                    elif event.key == pygame.K_SPACE:
                         self.state = STATE_START
                         self.auto_mode = False
                     elif event.key == pygame.K_ESCAPE:
@@ -363,12 +371,16 @@ class SnakeGame:
             self.screen.blit(new_high_text, new_high_rect)
         
         # Instructions
-        restart_text = self.small_font.render("Press SPACE to return to menu", True, WHITE)
-        restart_rect = restart_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 70))
+        restart_text = self.small_font.render("Press R to restart with current settings", True, WHITE)
+        restart_rect = restart_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 60))
         self.screen.blit(restart_text, restart_rect)
         
+        menu_text = self.small_font.render("Press SPACE to return to menu", True, WHITE)
+        menu_rect = menu_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 90))
+        self.screen.blit(menu_text, menu_rect)
+        
         esc_text = self.small_font.render("Press ESC to quit", True, GRAY)
-        esc_rect = esc_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 100))
+        esc_rect = esc_text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2 + 120))
         self.screen.blit(esc_text, esc_rect)
     
     def run(self):
