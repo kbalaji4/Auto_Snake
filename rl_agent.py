@@ -8,6 +8,7 @@ import os
 from typing import Dict, Tuple, Optional, Set, List
 from collections import defaultdict
 import random
+import threading
 
 
 class RLAgent:
@@ -35,6 +36,9 @@ class RLAgent:
         # Track neighbor count statistics: maps neighbor_count -> (death_count, total_count)
         # This helps learn which neighbor counts lead to death
         self.neighbor_stats: Dict[int, Tuple[int, int]] = defaultdict(lambda: (0, 0))
+        
+        # Thread safety lock for concurrent access
+        self.lock = threading.Lock()
         
         self.load_q_table()
     
@@ -123,17 +127,19 @@ class RLAgent:
         return direction
     
     def get_q_value(self, state: Tuple, action: Tuple[int, int]) -> float:
-        """Get Q-value for state-action pair"""
+        """Get Q-value for state-action pair (thread-safe)"""
         action_key = self.get_action_key(action)
-        return self.q_table[(state, action_key)]
+        with self.lock:
+            return self.q_table[(state, action_key)]
     
     def update_q_value(self, state: Tuple, action: Tuple[int, int], 
                       reward: float, next_state: Optional[Tuple] = None):
-        """Update Q-value using Q-learning update rule"""
+        """Update Q-value using Q-learning update rule (thread-safe)"""
         action_key = self.get_action_key(action)
         state_action = (state, action_key)
         
-        current_q = self.q_table[state_action]
+        with self.lock:
+            current_q = self.q_table[state_action]
         
         if next_state is not None:
             # Q-learning update: Q(s,a) = Q(s,a) + α[r + γ*max(Q(s',a')) - Q(s,a)]
@@ -149,15 +155,20 @@ class RLAgent:
             # Terminal state
             target_q = reward
         
-        # Update Q-value
-        self.q_table[state_action] = current_q + self.learning_rate * (target_q - current_q)
+        # Update Q-value (thread-safe)
+        with self.lock:
+            self.q_table[state_action] = current_q + self.learning_rate * (target_q - current_q)
     
     def get_reward(self, snake_head: Tuple[int, int], apple: Tuple[int, int],
                   snake_body: List[Tuple[int, int]], grid_size: int,
-                  game_over: bool, ate_apple: bool) -> float:
+                  game_over: bool, ate_apple: bool, fast_mode: bool = False) -> float:
         """
         Calculate reward for current state.
         Positive for good outcomes, negative for traps.
+        Now includes reachability-based rewards.
+        
+        Args:
+            fast_mode: If True, skip expensive reachability checks for faster training
         """
         if game_over:
             return -100.0  # Large negative reward for game over
@@ -175,7 +186,33 @@ class RLAgent:
         free_ratio = free_cells / (grid_size * grid_size)
         space_reward = free_ratio * 5.0
         
-        return distance_reward + space_reward
+        # Reward based on reachability - how many cells can be reached from current position
+        # Higher reachability = less trapped = better
+        # Skip in fast_mode for speed (use neighbor count as proxy)
+        if fast_mode:
+            # Fast approximation: use neighbor count as proxy for reachability
+            neighbor_count = self.count_neighbors(snake_head, obstacles, grid_size)
+            max_neighbors = 4
+            # Approximate reachability based on neighbors (more neighbors = better reachability)
+            reachability_ratio = neighbor_count / max_neighbors
+            reachability_reward = reachability_ratio * 5.0  # Reduced reward in fast mode
+        else:
+            try:
+                from hybrid_a_star import count_reachable_cells
+                reachable_cells = count_reachable_cells(snake_head, obstacles, grid_size, max_search=50)
+                total_free = free_cells
+                if total_free > 0:
+                    reachability_ratio = reachable_cells / total_free
+                    # Reward for high reachability (0.0 to 1.0, scaled to meaningful reward)
+                    # 100% reachable = +10.0 reward, 0% reachable = 0.0 reward
+                    reachability_reward = reachability_ratio * 10.0
+                else:
+                    reachability_reward = 0.0
+            except:
+                # Fallback if reachability check fails
+                reachability_reward = 0.0
+        
+        return distance_reward + space_reward + reachability_reward
     
     def get_action_penalty(self, state: Tuple, action: Tuple[int, int]) -> float:
         """
@@ -192,6 +229,7 @@ class RLAgent:
         """
         Get learned penalty for a neighbor count based on death statistics.
         Returns a penalty value to use in heuristic (higher = more dangerous).
+        (thread-safe read)
         
         Args:
             neighbor_count: Number of free neighbors (0-4)
@@ -200,12 +238,13 @@ class RLAgent:
         Returns:
             Penalty value (higher for more dangerous neighbor counts)
         """
-        if neighbor_count not in self.neighbor_stats:
-            # No data yet, use default penalty
-            max_neighbors = 4
-            return (max_neighbors - neighbor_count) * base_weight
-        
-        death_count, total_count = self.neighbor_stats[neighbor_count]
+        with self.lock:
+            if neighbor_count not in self.neighbor_stats:
+                # No data yet, use default penalty
+                max_neighbors = 4
+                return (max_neighbors - neighbor_count) * base_weight
+            
+            death_count, total_count = self.neighbor_stats[neighbor_count]
         
         if total_count == 0:
             # No data, use default
@@ -237,67 +276,76 @@ class RLAgent:
     def record_step(self, snake_head: Tuple[int, int], apple: Tuple[int, int],
                    snake_body: List[Tuple[int, int]], grid_size: int,
                    action: Tuple[int, int], reward: float):
-        """Record a step in the current episode"""
+        """Record a step in the current episode (thread-safe)"""
         state = self.get_state_key(snake_head, apple, snake_body, grid_size)
         # Also track neighbor count for this position
         obstacles = set(snake_body)
         neighbor_count = self.count_neighbors(snake_head, obstacles, grid_size)
-        self.current_episode.append((state, action, reward, neighbor_count))
+        with self.lock:
+            self.current_episode.append((state, action, reward, neighbor_count))
     
-    def learn_from_episode(self, final_reward: float, game_over: bool = False):
+    def learn_from_episode(self, final_reward: float, game_over: bool = False, final_score: int = 0):
         """
         Learn from the completed episode using Q-learning.
         Updates Q-values based on episode experience.
         Also updates neighbor count statistics.
+        
+        Args:
+            final_reward: Final reward for the episode
+            game_over: Whether the game ended in game over
+            final_score: Final score achieved (for display purposes)
         """
         if not self.current_episode:
             return
         
-        # Update neighbor statistics based on episode outcome
+        # Update neighbor statistics based on episode outcome (thread-safe)
+        with self.lock:
+            episode_copy = list(self.current_episode)  # Copy to avoid holding lock during processing
+        
         if game_over:
             # If game over, all neighbor counts in episode contributed to death
-            for step in self.current_episode:
+            for step in episode_copy:
                 if len(step) >= 4:  # Has neighbor_count
                     _, _, _, neighbor_count = step
-                    death_count, total_count = self.neighbor_stats[neighbor_count]
-                    self.neighbor_stats[neighbor_count] = (death_count + 1, total_count + 1)
-                else:
-                    # Old format without neighbor_count
-                    _, _, _ = step
+                    with self.lock:
+                        death_count, total_count = self.neighbor_stats[neighbor_count]
+                        self.neighbor_stats[neighbor_count] = (death_count + 1, total_count + 1)
         else:
             # If survived, these neighbor counts didn't lead to death
-            for step in self.current_episode:
+            for step in episode_copy:
                 if len(step) >= 4:  # Has neighbor_count
                     _, _, _, neighbor_count = step
-                    death_count, total_count = self.neighbor_stats[neighbor_count]
-                    self.neighbor_stats[neighbor_count] = (death_count, total_count + 1)
+                    with self.lock:
+                        death_count, total_count = self.neighbor_stats[neighbor_count]
+                        self.neighbor_stats[neighbor_count] = (death_count, total_count + 1)
         
         # Update Q-values backwards through episode
-        for i in range(len(self.current_episode) - 1, -1, -1):
-            step = self.current_episode[i]
+        for i in range(len(episode_copy) - 1, -1, -1):
+            step = episode_copy[i]
             if len(step) >= 4:
                 state, action, reward, _ = step
             else:
                 state, action, reward = step
             
-            if i == len(self.current_episode) - 1:
+            if i == len(episode_copy) - 1:
                 # Last step - use final reward
                 self.update_q_value(state, action, final_reward, None)
             else:
                 # Use next state
-                next_step = self.current_episode[i + 1]
+                next_step = episode_copy[i + 1]
                 if len(next_step) >= 4:
                     next_state, _, _, _ = next_step
                 else:
                     next_state, _, _ = next_step
                 self.update_q_value(state, action, reward, next_state)
         
-        # Clear episode
-        self.current_episode = []
-        self.games_played += 1
+        # Clear episode (thread-safe)
+        with self.lock:
+            self.current_episode = []
+            self.games_played += 1
         
         # Print learning progress
-        print(f"RL Learning: Game #{self.games_played} | Q-table size: {len(self.q_table)} | Final reward: {final_reward:.1f}")
+        print(f"RL Learning: Game #{self.games_played} | Score: {final_score} | Reward: {final_reward:.1f} | Q-table: {len(self.q_table)}")
         
         # Print neighbor statistics every 10 games
         if self.games_played % 10 == 0 and self.neighbor_stats:
@@ -313,36 +361,41 @@ class RLAgent:
             self.save_q_table()
     
     def get_stats(self) -> Dict[str, any]:
-        """Get statistics about the RL agent"""
-        # Calculate neighbor statistics summary
-        neighbor_summary = {}
-        for neighbor_count in range(5):  # 0-4 neighbors
-            if neighbor_count in self.neighbor_stats:
-                death_count, total_count = self.neighbor_stats[neighbor_count]
-                if total_count > 0:
-                    death_rate = death_count / total_count
-                    neighbor_summary[f'{neighbor_count}_neighbors'] = {
-                        'death_rate': death_rate,
-                        'total': total_count
-                    }
-        
-        return {
-            'q_table_size': len(self.q_table),
-            'games_played': self.games_played,
-            'is_active': True,
-            'neighbor_stats': neighbor_summary
-        }
+        """Get statistics about the RL agent (thread-safe)"""
+        with self.lock:
+            # Calculate neighbor statistics summary
+            neighbor_summary = {}
+            for neighbor_count in range(5):  # 0-4 neighbors
+                if neighbor_count in self.neighbor_stats:
+                    death_count, total_count = self.neighbor_stats[neighbor_count]
+                    if total_count > 0:
+                        death_rate = death_count / total_count
+                        neighbor_summary[f'{neighbor_count}_neighbors'] = {
+                            'death_rate': death_rate,
+                            'total': total_count
+                        }
+            
+            return {
+                'q_table_size': len(self.q_table),
+                'games_played': self.games_played,
+                'is_active': True,
+                'neighbor_stats': neighbor_summary
+            }
 
 
 # Global RL agent instance
 _rl_agent: Optional[RLAgent] = None
+_agent_lock = threading.Lock()
 
 
 def get_rl_agent() -> RLAgent:
-    """Get or create global RL agent instance"""
+    """Get or create global RL agent instance (thread-safe)"""
     global _rl_agent
     if _rl_agent is None:
-        _rl_agent = RLAgent()
+        with _agent_lock:
+            # Double-check pattern to avoid race condition
+            if _rl_agent is None:
+                _rl_agent = RLAgent()
     return _rl_agent
 
 
@@ -366,11 +419,80 @@ def record_game_step(snake_head: Tuple[int, int], apple: Tuple[int, int],
     agent.record_step(snake_head, apple, snake_body, grid_size, action, reward)
 
 
+def load_high_score() -> int:
+    """Load high score from file"""
+    high_score_file = "high_score.txt"
+    if os.path.exists(high_score_file):
+        try:
+            with open(high_score_file, 'r') as f:
+                return int(f.read().strip())
+        except:
+            return 0
+    return 0
+
+
 def learn_from_game(game_over: bool, final_score: int):
-    """Learn from completed game"""
+    """
+    Learn from completed game.
+    Rewards are normalized based on current high score to encourage improvement:
+    - Base penalty for game over: -100.0
+    - Score bonus is calculated relative to high score
+    - Only scores >= 80% of high score get positive final rewards
+    - Scores below 80% of high score remain negative
+    
+    Reward formula:
+    - If high_score == 0: use score * 10.0 (no normalization yet)
+    - If score_ratio < 0.8: score_bonus = score_ratio * 125.0 (0 to 100)
+    - If score_ratio >= 0.8: score_bonus = (score_ratio - 0.8) * 500.0 + 100.0
+    - Bonus: if score >= high_score, add extra 100.0
+    
+    Examples (assuming high_score = 64):
+    - Score 0 (0%): -100.0 + 0.0 = -100.0 (worst)
+    - Score 32 (50%): -100.0 + 40.0 = -60.0 (negative)
+    - Score 51 (80%): -100.0 + 100.0 = 0.0 (break even)
+    - Score 64 (100%): -100.0 + 200.0 + 100.0 = +200.0 (matches record)
+    - Score 80 (125%): -100.0 + 325.0 + 100.0 = +325.0 (new record!)
+    """
     agent = get_rl_agent()
-    final_reward = -100.0 if game_over else final_score * 10.0
-    agent.learn_from_episode(final_reward, game_over=game_over)
+    
+    # Load current high score
+    high_score = load_high_score()
+    
+    # Base penalty for game over (always happens when game ends)
+    base_penalty = -100.0
+    
+    # Calculate score bonus relative to high score
+    if high_score == 0:
+        # No high score yet, use simple multiplier
+        score_bonus = final_score * 10.0
+    else:
+        # Normalize based on high score
+        # Score as percentage of high score
+        score_ratio = final_score / high_score
+        
+        # Only give positive bonus if score is at least 80% of high score
+        # Below 80% should still be negative overall
+        if score_ratio >= 0.8:
+            # Good performance: scale from 80% to 100%+
+            # At 80%: score_bonus = 100.0 (breaks even: -100 + 100 = 0)
+            # At 100%: score_bonus = 200.0 (good: -100 + 200 = +100)
+            # Above 100%: continues scaling
+            score_bonus = (score_ratio - 0.8) * 500.0 + 100.0  # Scale from 100 to 200+ at 100%
+            
+            # Extra bonus for beating or matching the high score
+            if final_score >= high_score:
+                score_bonus += 100.0  # Significant bonus for new records
+        else:
+            # Poor performance: below 80% of high score
+            # Scale from 0% to 80%: penalty reduction from -100 to 0
+            # At 0%: score_bonus = 0 (full penalty: -100)
+            # At 80%: score_bonus = 100.0 (breaks even: -100 + 100 = 0)
+            score_bonus = score_ratio * 125.0  # Scale from 0 to 100
+    
+    # Final reward combines both: higher scores (relative to high score) get better rewards
+    final_reward = base_penalty + score_bonus
+    
+    agent.learn_from_episode(final_reward, game_over=game_over, final_score=final_score)
     agent.save_q_table()  # Save after each game
 
 

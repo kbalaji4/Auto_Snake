@@ -2,7 +2,7 @@ import pygame
 import random
 import sys
 import os
-from hybrid_a_star import get_next_direction as hybrid_a_star_get_next_direction
+from hybrid_a_star import get_next_direction as hybrid_a_star_get_next_direction, set_use_rl, get_use_rl
 from hamiltonian_cycle import get_next_direction_cached as hamiltonian_cycle_get_next_direction
 
 # Optional RL integration
@@ -158,6 +158,11 @@ class SnakeGame:
                     # Allow switching algorithm during auto mode
                     if event.key == pygame.K_t:
                         self.algorithm = ALGORITHM_HAMILTONIAN_CYCLE if self.algorithm == ALGORITHM_HYBRID_A_STAR else ALGORITHM_HYBRID_A_STAR
+                    # Toggle RL on/off for Hybrid A* (press 'Q' key for Q-learning)
+                    elif event.key == pygame.K_q and self.algorithm == ALGORITHM_HYBRID_A_STAR:
+                        current_rl_state = get_use_rl()
+                        set_use_rl(not current_rl_state)
+                        print(f"RL in Hybrid A*: {'ENABLED' if not current_rl_state else 'DISABLED'}")
                 
                 elif self.state == STATE_GAME_OVER:
                     if event.key == pygame.K_r:
@@ -472,10 +477,12 @@ class SnakeGame:
             # Show RL status if using Hybrid A*
             if self.algorithm == ALGORITHM_HYBRID_A_STAR and RL_AVAILABLE:
                 try:
+                    rl_enabled = get_use_rl()
                     rl_stats = get_rl_stats()
                     if rl_stats:
-                        rl_status = f"RL: Active | Q-table: {rl_stats['q_table_size']} | Games: {rl_stats['games_played']}"
-                        rl_text = self.small_font.render(rl_status, True, YELLOW)
+                        rl_state = "Active" if rl_enabled else "Disabled"
+                        rl_status = f"RL: {rl_state} | Q-table: {rl_stats['q_table_size']} | Games: {rl_stats['games_played']} (Press Q to toggle)"
+                        rl_text = self.small_font.render(rl_status, True, YELLOW if rl_enabled else GRAY)
                         self.screen.blit(rl_text, (10, WINDOW_SIZE + 35))
                 except:
                     pass

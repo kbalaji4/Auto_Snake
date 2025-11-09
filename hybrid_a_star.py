@@ -18,6 +18,19 @@ except ImportError:
         max_neighbors = 4
         return (max_neighbors - neighbor_count) * base_weight
 
+# Global flag to enable/disable RL in Hybrid A*
+# Set to False to disable Q-learning and use standard heuristics only
+USE_RL_IN_HYBRID_A_STAR = True
+
+def set_use_rl(enabled: bool):
+    """Enable or disable RL in Hybrid A* algorithm"""
+    global USE_RL_IN_HYBRID_A_STAR
+    USE_RL_IN_HYBRID_A_STAR = enabled
+
+def get_use_rl() -> bool:
+    """Check if RL is enabled in Hybrid A*"""
+    return USE_RL_IN_HYBRID_A_STAR
+
 
 class Node:
     """Node for A* algorithm"""
@@ -334,8 +347,8 @@ def enhanced_heuristic(
     # Count free neighbors - more neighbors = more options = better
     num_neighbors = count_free_neighbors(position, obstacles, grid_size)
     
-    # Use RL-learned neighbor penalty if available, otherwise use fixed weight
-    if RL_AVAILABLE:
+    # Use RL-learned neighbor penalty if available and enabled, otherwise use fixed weight
+    if RL_AVAILABLE and USE_RL_IN_HYBRID_A_STAR:
         neighbor_penalty = get_rl_neighbor_penalty(num_neighbors, base_weight=neighbor_weight)
     else:
         max_neighbors = 4  # Maximum possible neighbors in a grid
@@ -359,9 +372,9 @@ def enhanced_heuristic(
         # Assume good reachability if we're far from obstacles
         trap_penalty = 0.0
     
-    # RL-based penalty (if available and action provided)
+    # RL-based penalty (if available, enabled, and action provided)
     rl_penalty = 0.0
-    if RL_AVAILABLE and snake_body is not None and action is not None:
+    if RL_AVAILABLE and USE_RL_IN_HYBRID_A_STAR and snake_body is not None and action is not None:
         try:
             rl_penalty = get_rl_penalty(position, goal, snake_body, grid_size, action) * rl_weight
         except:
